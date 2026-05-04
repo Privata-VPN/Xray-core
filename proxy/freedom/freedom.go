@@ -195,22 +195,6 @@ func getDefaultFinalRule(inbound *session.Inbound) *FinalRule {
 	return nil
 }
 
-func (h *Handler) shouldResolveDomainBeforeFinalRules(dialDest net.Destination, defaultRule *FinalRule) bool {
-	if !dialDest.Address.Family().IsDomain() {
-		return false
-	}
-	if len(h.finalRules) > 0 {
-		rule := h.finalRules[0]
-		if rule.action == RuleAction_Allow && rule.network[dialDest.Network] && len(rule.port) == 0 && rule.ip == nil {
-			return false
-		}
-	}
-	if defaultRule != nil || len(h.finalRules) > 0 {
-		return true
-	}
-	return false
-}
-
 func (h *Handler) matchFinalRule(network net.Network, address net.Address, port net.Port, defaultRule *FinalRule) *FinalRule {
 	for _, rule := range h.finalRules {
 		if rule.Apply(network, address, port) {
@@ -671,7 +655,7 @@ func (w *PacketWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 				} else {
 					shouldUseSystemResolver := true
 					if resolveStrategy := w.Handler.udpDomainStrategy(); resolveStrategy.HasStrategy() {
-						ips, err := internet.LookupForIP(b.UDP.Address.Domain(), w.Handler.config.DomainStrategy, w.OutGateway)
+						ips, err := internet.LookupForIP(b.UDP.Address.Domain(), resolveStrategy, w.OutGateway)
 						if err != nil {
 							// drop packet if resolve failed when forceIP
 							if resolveStrategy.ForceIP() {
