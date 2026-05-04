@@ -43,6 +43,9 @@ func init() {
 				h.socketStrategy = sockopt.DomainStrategy
 			}
 		}
+		if handler, ok := session.FullHandlerFromContext(ctx).(handlerWithProxySettings); ok {
+			h.usesProxySettings = handler.UsesProxySettings()
+		}
 		if err := core.RequireFeatures(ctx, func(pm policy.Manager) error {
 			return h.Init(config.(*Config), pm)
 		}); err != nil {
@@ -97,6 +100,10 @@ type handlerWithSocketSettings interface {
 	SocketSettings() *internet.SocketConfig
 }
 
+type handlerWithProxySettings interface {
+	UsesProxySettings() bool
+}
+
 type FinalRule struct {
 	action     RuleAction
 	network    [8]bool
@@ -107,10 +114,11 @@ type FinalRule struct {
 
 // Handler handles Freedom connections.
 type Handler struct {
-	policyManager  policy.Manager
-	config         *Config
-	finalRules     []*FinalRule
-	socketStrategy internet.DomainStrategy
+	policyManager     policy.Manager
+	config            *Config
+	finalRules        []*FinalRule
+	socketStrategy    internet.DomainStrategy
+	usesProxySettings bool
 }
 
 func buildFinalRule(config *FinalRuleConfig) (*FinalRule, error) {
@@ -249,11 +257,25 @@ func (h *Handler) blockDelay(rule *FinalRule) time.Duration {
 		min = rule.blockDelay.Min
 		max = rule.blockDelay.Max
 	}
-	abs := max - min
+	span := max - min
 	if max < min {
-		abs = min - max
+		span = min - max
 	}
-	return time.Duration(min+uint64(dice.Roll(int(abs+1)))) * time.Second
+	return time.Duration(min+uint64(dice.Roll(int(span+1)))) * time.Second
+}
+
+func (h *Handler) blackhole(ctx context.Context, input buf.Reader, output buf.Writer, rule *FinalRule, dest *net.Destination) error {
+	delay := h.blockDelay(rule)
+	errors.LogInfo(ctx, "blocked target: ", *dest, ", blackholing connection for ", delay)
+	timer := time.AfterFunc(delay, func() {
+		common.Interrupt(input)
+		common.Interrupt(output)
+		errors.LogInfo(ctx, "closed blackholed connection to blocked target: ", *dest)
+	})
+	defer timer.Stop()
+	defer common.Close(output)
+	_ = buf.Copy(input, buf.Discard)
+	return nil
 }
 
 func (h *Handler) udpDomainStrategy() internet.DomainStrategy {
@@ -312,40 +334,73 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	var blockedRule *FinalRule
 	err := retry.ExponentialBackoff(5, 100).On(func() error {
 		dialDest := destination
-		if h.config.DomainStrategy.HasStrategy() && dialDest.Address.Family().IsDomain() {
-			strategy := h.config.DomainStrategy
-			if destination.Network == net.Network_UDP && origTargetAddr != nil && outGateway == nil {
-				strategy = strategy.GetDynamicStrategy(origTargetAddr.Family())
-			}
-			ips, err := internet.LookupForIP(dialDest.Address.Domain(), strategy, outGateway)
-			if err != nil {
-				errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", dialDest.Address.Domain())
-				if h.config.DomainStrategy.ForceIP() {
-					return err
+
+		if dialDest.Address.Family().IsDomain() {
+			if strategy := h.config.DomainStrategy; strategy.HasStrategy() {
+				if destination.Network == net.Network_UDP && origTargetAddr != nil && outGateway == nil {
+					strategy = strategy.GetDynamicStrategy(origTargetAddr.Family())
 				}
-			} else {
-				dialDest = net.Destination{
-					Network: dialDest.Network,
-					Address: net.IPAddress(ips[dice.Roll(len(ips))]),
-					Port:    dialDest.Port,
-				}
-				errors.LogInfo(ctx, "dialing to ", dialDest)
-			}
-		} else if h.shouldResolveDomainBeforeFinalRules(dialDest, defaultRule) { // asis + domain + hasrules
-			addrs, err := net.DefaultResolver.LookupIPAddr(ctx, dialDest.Address.Domain())
-			if err != nil {
-				errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", dialDest.Address.Domain())
-			} else if len(addrs) > 0 {
-				if addr := net.IPAddress(addrs[dice.Roll(len(addrs))].IP); addr != nil {
-					dialDest.Address = addr
+				ips, err := internet.LookupForIP(dialDest.Address.Domain(), strategy, outGateway)
+				if err != nil { // SRV/TXT
+					errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", dialDest.Address.Domain())
+					if h.config.DomainStrategy.ForceIP() || defaultRule != nil || len(h.finalRules) > 0 {
+						return err // retry
+					}
+				} else { // to ip
+					dialDest = net.Destination{
+						Network: dialDest.Network,
+						Address: net.IPAddress(ips[dice.Roll(len(ips))]),
+						Port:    dialDest.Port,
+					}
 					errors.LogInfo(ctx, "dialing to ", dialDest)
+					if rule := h.matchFinalRule(dialDest.Network, dialDest.Address, dialDest.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
+						blockedDest = &dialDest
+						blockedRule = rule
+						return nil
+					}
+				}
+			} else if defaultRule != nil || len(h.finalRules) > 0 { // freedom asis + hasrules
+				if strategy := h.socketStrategy; strategy.HasStrategy() {
+					ips, err := internet.LookupForIP(dialDest.Address.Domain(), strategy, outGateway)
+					if err != nil { // SRV/TXT
+						errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", dialDest.Address.Domain())
+						if strategy.ForceIP() {
+							return err // retry
+						}
+					}
+					for _, ip := range ips {
+						if addr := net.IPAddress(ip); addr != nil {
+							if rule := h.matchFinalRule(dialDest.Network, addr, dialDest.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
+								blockedDest = &dialDest
+								blockedDest.Address = addr
+								blockedRule = rule
+								return nil
+							}
+						}
+					}
+				} else { // sockopt asis
+					addrs, err := net.DefaultResolver.LookupIPAddr(ctx, dialDest.Address.Domain())
+					if err != nil { // SRV/TXT
+						errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", dialDest.Address.Domain())
+					}
+					for _, addr := range addrs {
+						if ipAddr := net.IPAddress(addr.IP); ipAddr != nil {
+							if rule := h.matchFinalRule(dialDest.Network, ipAddr, dialDest.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
+								blockedDest = &dialDest
+								blockedDest.Address = ipAddr
+								blockedRule = rule
+								return nil
+							}
+						}
+					}
 				}
 			}
-		}
-		if rule := h.matchFinalRule(dialDest.Network, dialDest.Address, dialDest.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
-			blockedDest = &dialDest
-			blockedRule = rule
-			return nil
+		} else {
+			if rule := h.matchFinalRule(dialDest.Network, dialDest.Address, dialDest.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
+				blockedDest = &dialDest
+				blockedRule = rule
+				return nil
+			}
 		}
 
 		rawConn, err := dialer.Dial(ctx, dialDest)
@@ -360,25 +415,21 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		return errors.New("failed to open connection to ", destination).Base(err)
 	}
 	if blockedDest != nil {
-		delay := h.blockDelay(blockedRule)
-		errors.LogInfo(ctx, "blocked target: ", *blockedDest, ", blackholing connection for ", delay)
-		timer := time.AfterFunc(delay, func() {
-			common.Interrupt(input)
-			common.Interrupt(output)
-			errors.LogInfo(ctx, "closed blackholed connection to blocked target: ", *blockedDest)
-		})
-		defer timer.Stop()
-		defer common.Close(output)
-		if err := buf.Copy(input, buf.Discard); err != nil {
-			return nil
-		}
-		return nil
+		return h.blackhole(ctx, input, output, blockedRule, blockedDest)
 	}
-	// TODO: SRV/TXT
-	// if remoteDest := net.DestinationFromAddr(conn.RemoteAddr()); h.applyFinalRules(remoteDest.Network, remoteDest.Address, remoteDest.Port, defaultRule) == RuleAction_Block {
-	// 	conn.Close()
-	// 	return blackhole(remoteDest)
-	// }
+	if defaultRule != nil || len(h.finalRules) > 0 {
+		if h.usesProxySettings {
+			errors.LogInfo(ctx, "skipping final rule check for proxied remote endpoint, original target: ", destination)
+		} else {
+			// SRV/TXT, lookup failed
+			remoteDest := net.DestinationFromAddr(conn.RemoteAddr())
+			if rule := h.matchFinalRule(remoteDest.Network, remoteDest.Address, remoteDest.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
+				conn.Close()
+				return h.blackhole(ctx, input, output, rule, &remoteDest)
+			}
+		}
+	}
+
 	if h.config.ProxyProtocol > 0 && h.config.ProxyProtocol <= 2 {
 		version := byte(h.config.ProxyProtocol)
 		srcAddr := inbound.Source.RawNetAddr()
