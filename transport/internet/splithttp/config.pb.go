@@ -187,6 +187,7 @@ type Config struct {
 	UplinkDataKey        string                 `protobuf:"bytes,25,opt,name=uplinkDataKey,proto3" json:"uplinkDataKey,omitempty"`
 	UplinkChunkSize      *RangeConfig           `protobuf:"bytes,26,opt,name=uplinkChunkSize,proto3" json:"uplinkChunkSize,omitempty"`
 	ServerMaxHeaderBytes int32                  `protobuf:"varint,27,opt,name=serverMaxHeaderBytes,proto3" json:"serverMaxHeaderBytes,omitempty"`
+	MaxReadFrameSize     int32                  `protobuf:"varint,28,opt,name=maxReadFrameSize,proto3" json:"maxReadFrameSize,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -406,6 +407,13 @@ func (x *Config) GetUplinkChunkSize() *RangeConfig {
 func (x *Config) GetServerMaxHeaderBytes() int32 {
 	if x != nil {
 		return x.ServerMaxHeaderBytes
+	}
+	return 0
+}
+
+func (x *Config) GetMaxReadFrameSize() int32 {
+	if x != nil {
+		return x.MaxReadFrameSize
 	}
 	return 0
 }

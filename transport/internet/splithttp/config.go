@@ -206,6 +206,16 @@ func (c *Config) GetNormalizedServerMaxHeaderBytes() int {
 	}
 }
 
+func (c *Config) GetNormalizedMaxReadFrameSize() int {
+	if c.MaxReadFrameSize <= 0 {
+		return 0
+	}
+	if c.MaxReadFrameSize < 16384 {
+		return 16384
+	}
+	return int(c.MaxReadFrameSize)
+}
+
 func (c *Config) GetNormalizedSessionPlacement() string {
 	if c.SessionPlacement == "" {
 		return PlacementPath

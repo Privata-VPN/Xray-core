@@ -572,6 +572,11 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 			MaxHeaderBytes:    l.config.GetNormalizedServerMaxHeaderBytes(),
 			Protocols:         protocols,
 		}
+		if v := l.config.GetNormalizedMaxReadFrameSize(); v > 0 {
+			l.server.HTTP2 = &http.HTTP2Config{
+				MaxReadFrameSize: v,
+			}
+		}
 		go func() {
 			if err := l.server.Serve(l.listener); err != nil {
 				errors.LogErrorInner(ctx, err, "failed to serve HTTP for XHTTP")
