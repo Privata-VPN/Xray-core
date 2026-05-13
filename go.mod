@@ -62,4 +62,4 @@ require (
 	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0 // indirect
 )
 
-replace golang.org/x/net v0.61.0 => ./xnet
+replace golang.org/x/net v0.61.0 => github.com/Privata-VPN/xnet v0.61.0-privata.1
