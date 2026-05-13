@@ -572,10 +572,13 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 			MaxHeaderBytes:    l.config.GetNormalizedServerMaxHeaderBytes(),
 			Protocols:         protocols,
 		}
-		if v := l.config.GetNormalizedMaxReadFrameSize(); v > 0 {
+		v := l.config.GetNormalizedMaxReadFrameSize()
+		errors.LogInfo(ctx, "[xhttp] MaxReadFrameSize from config: ", v, " (raw: ", l.config.MaxReadFrameSize, ")")
+		if v > 0 {
 			l.server.HTTP2 = &http.HTTP2Config{
 				MaxReadFrameSize: v,
 			}
+			errors.LogInfo(ctx, "[xhttp] HTTP2Config applied to server")
 		}
 		go func() {
 			if err := l.server.Serve(l.listener); err != nil {
