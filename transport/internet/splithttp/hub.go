@@ -562,9 +562,10 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 
 		handler.localAddr = l.listener.Addr()
 
-		// server can handle both plaintext HTTP/1.1 and h2c
+		// server can handle plaintext HTTP/1.1, h2c, and h2 (via TLS/Reality ALPN)
 		protocols := new(http.Protocols)
 		protocols.SetHTTP1(true)
+		protocols.SetHTTP2(true)
 		protocols.SetUnencryptedHTTP2(true)
 		l.server = http.Server{
 			Handler:           handler,
@@ -573,12 +574,12 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 			Protocols:         protocols,
 		}
 		v := l.config.GetNormalizedMaxReadFrameSize()
-		errors.LogInfo(ctx, "[xhttp] MaxReadFrameSize from config: ", v, " (raw: ", l.config.MaxReadFrameSize, ")")
+		errors.LogDebug(ctx, "[xhttp] MaxReadFrameSize from config: ", v, " (raw: ", l.config.MaxReadFrameSize, ")")
 		if v > 0 {
 			l.server.HTTP2 = &http.HTTP2Config{
 				MaxReadFrameSize: v,
 			}
-			errors.LogInfo(ctx, "[xhttp] HTTP2Config applied to server")
+			errors.LogDebug(ctx, "[xhttp] HTTP2Config applied to server")
 		}
 		go func() {
 			if err := l.server.Serve(l.listener); err != nil {
