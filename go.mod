@@ -64,4 +64,4 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
-replace golang.org/x/net v0.53.0 => ./xnet
+replace golang.org/x/net v0.57.0 => github.com/Privata-VPN/xnet v0.57.0-privata.1
