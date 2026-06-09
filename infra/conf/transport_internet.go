@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -652,7 +653,7 @@ type TLSConfig struct {
 	MinVersion              string           `json:"minVersion"`
 	MaxVersion              string           `json:"maxVersion"`
 	CipherSuites            string           `json:"cipherSuites"`
-	Fingerprint             string           `json:"fingerprint"`
+	Fingerprint             json.RawMessage  `json:"fingerprint"`
 	RejectUnknownSNI        bool             `json:"rejectUnknownSni"`
 	CurvePreferences        *StringList      `json:"curvePreferences"`
 	MasterKeyLog            string           `json:"masterKeyLog"`
@@ -663,6 +664,31 @@ type TLSConfig struct {
 	ECHConfigList           string           `json:"echConfigList"`
 	ECHForceQuery           string           `json:"echForceQuery"`
 	ECHSocketSettings       *SocketConfig    `json:"echSockopt"`
+}
+
+// resolveFingerprint interprets a "fingerprint" config value that may be either
+// a preset name (JSON string) or an inline uTLS ClientHelloSpec (JSON object).
+// It returns the value to store in the transport's proto fingerprint field,
+// whether it was a custom inline spec, and an error. For custom specs the spec is
+// validated and the returned value is its compact JSON, which is stored verbatim
+// in the proto so it survives the protobuf/gRPC config boundary.
+func resolveFingerprint(raw json.RawMessage) (value string, isCustom bool, err error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "", false, nil
+	}
+	if trimmed[0] == '{' { // inline ClientHelloSpec JSON
+		normalized, err := tls.NormalizeCustomFingerprint(trimmed)
+		if err != nil {
+			return "", false, err
+		}
+		return normalized, true, nil
+	}
+	var preset string
+	if err := json.Unmarshal(trimmed, &preset); err != nil {
+		return "", false, err
+	}
+	return strings.ToLower(preset), false, nil
 }
 
 // Build implements Buildable.
@@ -698,10 +724,14 @@ func (c *TLSConfig) Build() (proto.Message, error) {
 	config.MinVersion = c.MinVersion
 	config.MaxVersion = c.MaxVersion
 	config.CipherSuites = c.CipherSuites
-	config.Fingerprint = strings.ToLower(c.Fingerprint)
-	if config.Fingerprint != "unsafe" && tls.GetFingerprint(config.Fingerprint) == nil {
-		return nil, errors.New(`unknown "fingerprint": `, config.Fingerprint)
+	fingerprintName, isCustomFingerprint, err := resolveFingerprint(c.Fingerprint)
+	if err != nil {
+		return nil, errors.New(`invalid "fingerprint"`).Base(err)
 	}
+	if !isCustomFingerprint && fingerprintName != "" && fingerprintName != "unsafe" && tls.GetFingerprint(fingerprintName) == nil {
+		return nil, errors.New(`unknown "fingerprint": `, fingerprintName)
+	}
+	config.Fingerprint = fingerprintName
 	config.RejectUnknownSni = c.RejectUnknownSNI
 	config.MasterKeyLog = c.MasterKeyLog
 
@@ -794,13 +824,13 @@ type REALITYConfig struct {
 	LimitFallbackUpload   LimitFallback `json:"limitFallbackUpload"`
 	LimitFallbackDownload LimitFallback `json:"limitFallbackDownload"`
 
-	Fingerprint   string `json:"fingerprint"`
-	ServerName    string `json:"serverName"`
-	Password      string `json:"password"`
-	PublicKey     string `json:"publicKey"`
-	ShortId       string `json:"shortId"`
-	Mldsa65Verify string `json:"mldsa65Verify"`
-	SpiderX       string `json:"spiderX"`
+	Fingerprint   json.RawMessage `json:"fingerprint"`
+	ServerName    string          `json:"serverName"`
+	Password      string          `json:"password"`
+	PublicKey     string          `json:"publicKey"`
+	ShortId       string          `json:"shortId"`
+	Mldsa65Verify string          `json:"mldsa65Verify"`
+	SpiderX       string          `json:"spiderX"`
 }
 
 func (c *REALITYConfig) Build() (proto.Message, error) {
@@ -923,13 +953,19 @@ func (c *REALITYConfig) Build() (proto.Message, error) {
 		config.LimitFallbackDownload.BytesPerSec = c.LimitFallbackDownload.BytesPerSec
 		config.LimitFallbackDownload.BurstBytesPerSec = c.LimitFallbackDownload.BurstBytesPerSec
 	} else {
-		config.Fingerprint = strings.ToLower(c.Fingerprint)
-		if config.Fingerprint == "unsafe" || config.Fingerprint == "hellogolang" {
-			return nil, errors.New(`invalid "fingerprint": `, config.Fingerprint)
+		fingerprintName, isCustomFingerprint, ferr := resolveFingerprint(c.Fingerprint)
+		if ferr != nil {
+			return nil, errors.New(`invalid "fingerprint"`).Base(ferr)
 		}
-		if tls.GetFingerprint(config.Fingerprint) == nil {
-			return nil, errors.New(`unknown "fingerprint": `, config.Fingerprint)
+		if !isCustomFingerprint {
+			if fingerprintName == "unsafe" || fingerprintName == "hellogolang" {
+				return nil, errors.New(`invalid "fingerprint": `, fingerprintName)
+			}
+			if tls.GetFingerprint(fingerprintName) == nil {
+				return nil, errors.New(`unknown "fingerprint": `, fingerprintName)
+			}
 		}
+		config.Fingerprint = fingerprintName
 		if len(c.ServerNames) != 0 {
 			return nil, errors.New(`non-empty "serverNames", please use "serverName" instead`)
 		}

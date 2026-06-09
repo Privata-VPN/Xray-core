@@ -1,15 +1,20 @@
 package tls
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"math/big"
+	gonet "net"
 	"slices"
+	"strings"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
 	"github.com/xtls/xray-core/common/buf"
+	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/utils"
 )
@@ -136,6 +141,13 @@ func (c *UConn) NegotiatedProtocol() string {
 }
 
 func UClient(c net.Conn, config *tls.Config, fingerprint *utls.ClientHelloID) net.Conn {
+	if spec, ok := CustomSpec(fingerprint); ok {
+		utlsConn := utls.UClient(c, copyConfig(config), utls.HelloCustom)
+		// The spec was validated at config load time (see NormalizeCustomFingerprint),
+		// so a failure here is not expected; any residual error surfaces at handshake.
+		_ = utlsConn.ApplyPreset(spec)
+		return &UConn{UConn: utlsConn}
+	}
 	utlsConn := utls.UClient(c, copyConfig(config), *fingerprint)
 	return &UConn{UConn: utlsConn}
 }
@@ -186,6 +198,11 @@ func GetFingerprint(name string) (fingerprint *utls.ClientHelloID) {
 	if name == "" {
 		return &utls.HelloChrome_Auto
 	}
+	// An inline uTLS ClientHelloSpec (JSON object) is carried verbatim in the
+	// fingerprint field so it survives the protobuf/gRPC config boundary.
+	if isCustomFingerprintSpec(name) {
+		return &utls.ClientHelloID{Client: customFingerprintClient, Version: name}
+	}
 	if fingerprint = PresetFingerprints[name]; fingerprint != nil {
 		return
 	}
@@ -196,6 +213,87 @@ func GetFingerprint(name string) (fingerprint *utls.ClientHelloID) {
 		return
 	}
 	return
+}
+
+// customFingerprintClient is the synthetic ClientHelloID.Client marker used to
+// carry an inline uTLS ClientHelloSpec (its JSON) through GetFingerprint and
+// CustomSpec without a side registry, so it survives config serialization.
+const customFingerprintClient = "Custom"
+
+// isCustomFingerprintSpec reports whether a fingerprint value is an inline uTLS
+// ClientHelloSpec (a JSON object) rather than a preset name.
+func isCustomFingerprintSpec(s string) bool {
+	s = strings.TrimSpace(s)
+	return len(s) > 0 && s[0] == '{'
+}
+
+// parseCustomSpec safely unmarshals an inline uTLS ClientHelloSpec. uTLS's
+// ClientHelloSpec.UnmarshalJSON unconditionally dereferences the cipher_suites,
+// compression_methods and extensions sub-unmarshalers, so an object missing any
+// of them (e.g. "{}") panics. We validate their presence for a clear error and
+// recover from any residual panic so a malformed spec never crashes the process
+// (the spec can arrive unvalidated via a .pb config or the gRPC API).
+func parseCustomSpec(specJSON []byte) (spec *utls.ClientHelloSpec, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			spec = nil
+			err = errors.New("invalid custom fingerprint spec: ", r)
+		}
+	}()
+	var required struct {
+		CipherSuites       *json.RawMessage `json:"cipher_suites"`
+		CompressionMethods *json.RawMessage `json:"compression_methods"`
+		Extensions         *json.RawMessage `json:"extensions"`
+	}
+	if e := json.Unmarshal(specJSON, &required); e != nil {
+		return nil, errors.New("failed to parse custom fingerprint").Base(e)
+	}
+	if required.CipherSuites == nil || required.CompressionMethods == nil || required.Extensions == nil {
+		return nil, errors.New(`custom fingerprint must define "cipher_suites", "compression_methods" and "extensions"`)
+	}
+	spec = &utls.ClientHelloSpec{}
+	if e := spec.UnmarshalJSON(specJSON); e != nil {
+		return nil, errors.New("failed to parse custom fingerprint").Base(e)
+	}
+	return spec, nil
+}
+
+// NormalizeCustomFingerprint validates an inline uTLS ClientHelloSpec (the uTLS
+// ClientHello JSON schema) and returns a compact JSON encoding to store in the
+// transport's fingerprint field. The spec is fully parsed and applied to a
+// throwaway connection so configuration errors (e.g. invalid TLS versions or too
+// many GREASE extensions) surface at load time rather than at first dial.
+func NormalizeCustomFingerprint(specJSON []byte) (string, error) {
+	spec, err := parseCustomSpec(specJSON)
+	if err != nil {
+		return "", err
+	}
+	c1, c2 := gonet.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	if err := utls.UClient(c1, &utls.Config{InsecureSkipVerify: true}, utls.HelloCustom).ApplyPreset(spec); err != nil {
+		return "", errors.New("invalid custom fingerprint").Base(err)
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, specJSON); err != nil {
+		return "", errors.New("failed to compact custom fingerprint").Base(err)
+	}
+	return compact.String(), nil
+}
+
+// CustomSpec returns a freshly-parsed ClientHelloSpec when the fingerprint carries
+// an inline uTLS ClientHelloSpec (see GetFingerprint). A new spec is parsed on
+// every call because uTLS mutates a spec's extensions during ApplyPreset, so a
+// single shared spec must not be reused across connections.
+func CustomSpec(fingerprint *utls.ClientHelloID) (*utls.ClientHelloSpec, bool) {
+	if fingerprint == nil || !isCustomFingerprintSpec(fingerprint.Version) {
+		return nil, false
+	}
+	spec, err := parseCustomSpec([]byte(fingerprint.Version))
+	if err != nil {
+		return nil, false
+	}
+	return spec, true
 }
 
 var PresetFingerprints = map[string]*utls.ClientHelloID{
