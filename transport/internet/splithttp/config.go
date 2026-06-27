@@ -222,6 +222,13 @@ func (c *Config) GetNormalizedMaxReadFrameSize() int {
 	return int(c.MaxReadFrameSize)
 }
 
+func (c *Config) GetNormalizedDownlinkFlushChunkSize() int {
+	if c.DownlinkFlushChunkSize <= 0 {
+		return 0
+	}
+	return int(c.DownlinkFlushChunkSize)
+}
+
 func (c *Config) GetNormalizedSessionPlacement() string {
 	if c.SessionIDPlacement == "" {
 		return PlacementPath
