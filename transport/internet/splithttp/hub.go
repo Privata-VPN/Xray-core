@@ -212,9 +212,10 @@ func (h *requestHandler) ServeHTTP(writer http.ResponseWriter, request *http.Req
 				return
 			}
 			httpSC := &httpServerConn{
-				Instance:       done.New(),
-				Reader:         request.Body,
-				ResponseWriter: writer,
+				Instance:           done.New(),
+				Reader:             request.Body,
+				ResponseWriter:     writer,
+				downlinkFlushChunk: h.config.GetNormalizedDownlinkFlushChunkSize(),
 			}
 			err = currentSession.uploadQueue.Push(Packet{
 				Reader: httpSC,
@@ -381,9 +382,10 @@ func (h *requestHandler) ServeHTTP(writer http.ResponseWriter, request *http.Req
 		writer.(http.Flusher).Flush()
 
 		httpSC := &httpServerConn{
-			Instance:       done.New(),
-			Reader:         request.Body,
-			ResponseWriter: writer,
+			Instance:           done.New(),
+			Reader:             request.Body,
+			ResponseWriter:     writer,
+			downlinkFlushChunk: h.config.GetNormalizedDownlinkFlushChunkSize(),
 		}
 		conn := splitConn{
 			writer:     httpSC,
@@ -415,6 +417,17 @@ type httpServerConn struct {
 	*done.Instance
 	io.Reader // no need to Close request.Body
 	http.ResponseWriter
+	// downlinkFlushChunk caps the size of each flushed downlink write. When 0
+	// (the default), each Write is forwarded and flushed in a single call.
+	//
+	// Some CDNs (e.g. Yandex) forward only the first ~2.8 KB of any single
+	// flush promptly and withhold the remainder until the next flush or
+	// connection close. On the raw stream-down body that deadlocks half-step
+	// handshakes (the tail of a lone ServerHello never reaches the client).
+	// Keeping every flush below that threshold makes the CDN forward each write
+	// in full, including the final lone one, without injecting any bytes into
+	// the (unframed) tunnel stream.
+	downlinkFlushChunk int
 }
 
 func (c *httpServerConn) Write(b []byte) (int, error) {
@@ -423,11 +436,29 @@ func (c *httpServerConn) Write(b []byte) (int, error) {
 	if c.Done() {
 		return 0, io.ErrClosedPipe
 	}
-	n, err := c.ResponseWriter.Write(b)
-	if err == nil {
-		c.ResponseWriter.(http.Flusher).Flush()
+	flusher := c.ResponseWriter.(http.Flusher)
+	if c.downlinkFlushChunk <= 0 {
+		n, err := c.ResponseWriter.Write(b)
+		if err == nil {
+			flusher.Flush()
+		}
+		return n, err
 	}
-	return n, err
+	written := 0
+	for len(b) > 0 {
+		end := len(b)
+		if end > c.downlinkFlushChunk {
+			end = c.downlinkFlushChunk
+		}
+		n, err := c.ResponseWriter.Write(b[:end])
+		written += n
+		if err != nil {
+			return written, err
+		}
+		flusher.Flush()
+		b = b[n:]
+	}
+	return written, nil
 }
 
 func (c *httpServerConn) Close() error {
