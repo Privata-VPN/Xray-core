@@ -159,37 +159,38 @@ func (x *XmuxConfig) GetHKeepAlivePeriod() int64 {
 }
 
 type Config struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	Host                 string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
-	Path                 string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Mode                 string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
-	Headers              map[string]string      `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	XPaddingBytes        *RangeConfig           `protobuf:"bytes,5,opt,name=xPaddingBytes,proto3" json:"xPaddingBytes,omitempty"`
-	NoGRPCHeader         bool                   `protobuf:"varint,6,opt,name=noGRPCHeader,proto3" json:"noGRPCHeader,omitempty"`
-	NoSSEHeader          bool                   `protobuf:"varint,7,opt,name=noSSEHeader,proto3" json:"noSSEHeader,omitempty"`
-	ScMaxEachPostBytes   *RangeConfig           `protobuf:"bytes,8,opt,name=scMaxEachPostBytes,proto3" json:"scMaxEachPostBytes,omitempty"`
-	ScMinPostsIntervalMs *RangeConfig           `protobuf:"bytes,9,opt,name=scMinPostsIntervalMs,proto3" json:"scMinPostsIntervalMs,omitempty"`
-	ScMaxBufferedPosts   int64                  `protobuf:"varint,10,opt,name=scMaxBufferedPosts,proto3" json:"scMaxBufferedPosts,omitempty"`
-	ScStreamUpServerSecs *RangeConfig           `protobuf:"bytes,11,opt,name=scStreamUpServerSecs,proto3" json:"scStreamUpServerSecs,omitempty"`
-	Xmux                 *XmuxConfig            `protobuf:"bytes,12,opt,name=xmux,proto3" json:"xmux,omitempty"`
-	DownloadSettings     *internet.StreamConfig `protobuf:"bytes,13,opt,name=downloadSettings,proto3" json:"downloadSettings,omitempty"`
-	XPaddingObfsMode     bool                   `protobuf:"varint,14,opt,name=xPaddingObfsMode,proto3" json:"xPaddingObfsMode,omitempty"`
-	XPaddingKey          string                 `protobuf:"bytes,15,opt,name=xPaddingKey,proto3" json:"xPaddingKey,omitempty"`
-	XPaddingHeader       string                 `protobuf:"bytes,16,opt,name=xPaddingHeader,proto3" json:"xPaddingHeader,omitempty"`
-	XPaddingPlacement    string                 `protobuf:"bytes,17,opt,name=xPaddingPlacement,proto3" json:"xPaddingPlacement,omitempty"`
-	XPaddingMethod       string                 `protobuf:"bytes,18,opt,name=xPaddingMethod,proto3" json:"xPaddingMethod,omitempty"`
-	UplinkHTTPMethod     string                 `protobuf:"bytes,19,opt,name=uplinkHTTPMethod,proto3" json:"uplinkHTTPMethod,omitempty"`
-	SessionPlacement     string                 `protobuf:"bytes,20,opt,name=sessionPlacement,proto3" json:"sessionPlacement,omitempty"`
-	SessionKey           string                 `protobuf:"bytes,21,opt,name=sessionKey,proto3" json:"sessionKey,omitempty"`
-	SeqPlacement         string                 `protobuf:"bytes,22,opt,name=seqPlacement,proto3" json:"seqPlacement,omitempty"`
-	SeqKey               string                 `protobuf:"bytes,23,opt,name=seqKey,proto3" json:"seqKey,omitempty"`
-	UplinkDataPlacement  string                 `protobuf:"bytes,24,opt,name=uplinkDataPlacement,proto3" json:"uplinkDataPlacement,omitempty"`
-	UplinkDataKey        string                 `protobuf:"bytes,25,opt,name=uplinkDataKey,proto3" json:"uplinkDataKey,omitempty"`
-	UplinkChunkSize      *RangeConfig           `protobuf:"bytes,26,opt,name=uplinkChunkSize,proto3" json:"uplinkChunkSize,omitempty"`
-	ServerMaxHeaderBytes int32                  `protobuf:"varint,27,opt,name=serverMaxHeaderBytes,proto3" json:"serverMaxHeaderBytes,omitempty"`
-	MaxReadFrameSize     int32                  `protobuf:"varint,28,opt,name=maxReadFrameSize,proto3" json:"maxReadFrameSize,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	Host                   string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
+	Path                   string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Mode                   string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	Headers                map[string]string      `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	XPaddingBytes          *RangeConfig           `protobuf:"bytes,5,opt,name=xPaddingBytes,proto3" json:"xPaddingBytes,omitempty"`
+	NoGRPCHeader           bool                   `protobuf:"varint,6,opt,name=noGRPCHeader,proto3" json:"noGRPCHeader,omitempty"`
+	NoSSEHeader            bool                   `protobuf:"varint,7,opt,name=noSSEHeader,proto3" json:"noSSEHeader,omitempty"`
+	ScMaxEachPostBytes     *RangeConfig           `protobuf:"bytes,8,opt,name=scMaxEachPostBytes,proto3" json:"scMaxEachPostBytes,omitempty"`
+	ScMinPostsIntervalMs   *RangeConfig           `protobuf:"bytes,9,opt,name=scMinPostsIntervalMs,proto3" json:"scMinPostsIntervalMs,omitempty"`
+	ScMaxBufferedPosts     int64                  `protobuf:"varint,10,opt,name=scMaxBufferedPosts,proto3" json:"scMaxBufferedPosts,omitempty"`
+	ScStreamUpServerSecs   *RangeConfig           `protobuf:"bytes,11,opt,name=scStreamUpServerSecs,proto3" json:"scStreamUpServerSecs,omitempty"`
+	Xmux                   *XmuxConfig            `protobuf:"bytes,12,opt,name=xmux,proto3" json:"xmux,omitempty"`
+	DownloadSettings       *internet.StreamConfig `protobuf:"bytes,13,opt,name=downloadSettings,proto3" json:"downloadSettings,omitempty"`
+	XPaddingObfsMode       bool                   `protobuf:"varint,14,opt,name=xPaddingObfsMode,proto3" json:"xPaddingObfsMode,omitempty"`
+	XPaddingKey            string                 `protobuf:"bytes,15,opt,name=xPaddingKey,proto3" json:"xPaddingKey,omitempty"`
+	XPaddingHeader         string                 `protobuf:"bytes,16,opt,name=xPaddingHeader,proto3" json:"xPaddingHeader,omitempty"`
+	XPaddingPlacement      string                 `protobuf:"bytes,17,opt,name=xPaddingPlacement,proto3" json:"xPaddingPlacement,omitempty"`
+	XPaddingMethod         string                 `protobuf:"bytes,18,opt,name=xPaddingMethod,proto3" json:"xPaddingMethod,omitempty"`
+	UplinkHTTPMethod       string                 `protobuf:"bytes,19,opt,name=uplinkHTTPMethod,proto3" json:"uplinkHTTPMethod,omitempty"`
+	SessionPlacement       string                 `protobuf:"bytes,20,opt,name=sessionPlacement,proto3" json:"sessionPlacement,omitempty"`
+	SessionKey             string                 `protobuf:"bytes,21,opt,name=sessionKey,proto3" json:"sessionKey,omitempty"`
+	SeqPlacement           string                 `protobuf:"bytes,22,opt,name=seqPlacement,proto3" json:"seqPlacement,omitempty"`
+	SeqKey                 string                 `protobuf:"bytes,23,opt,name=seqKey,proto3" json:"seqKey,omitempty"`
+	UplinkDataPlacement    string                 `protobuf:"bytes,24,opt,name=uplinkDataPlacement,proto3" json:"uplinkDataPlacement,omitempty"`
+	UplinkDataKey          string                 `protobuf:"bytes,25,opt,name=uplinkDataKey,proto3" json:"uplinkDataKey,omitempty"`
+	UplinkChunkSize        *RangeConfig           `protobuf:"bytes,26,opt,name=uplinkChunkSize,proto3" json:"uplinkChunkSize,omitempty"`
+	ServerMaxHeaderBytes   int32                  `protobuf:"varint,27,opt,name=serverMaxHeaderBytes,proto3" json:"serverMaxHeaderBytes,omitempty"`
+	MaxReadFrameSize       int32                  `protobuf:"varint,28,opt,name=maxReadFrameSize,proto3" json:"maxReadFrameSize,omitempty"`
+	DownlinkFlushChunkSize int32                  `protobuf:"varint,29,opt,name=downlinkFlushChunkSize,proto3" json:"downlinkFlushChunkSize,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *Config) Reset() {
@@ -418,6 +419,13 @@ func (x *Config) GetMaxReadFrameSize() int32 {
 	return 0
 }
 
+func (x *Config) GetDownlinkFlushChunkSize() int32 {
+	if x != nil {
+		return x.DownlinkFlushChunkSize
+	}
+	return 0
+}
+
 var File_transport_internet_splithttp_config_proto protoreflect.FileDescriptor
 
 const file_transport_internet_splithttp_config_proto_rawDesc = "" +
@@ -433,7 +441,7 @@ const file_transport_internet_splithttp_config_proto_rawDesc = "" +
 	"\x0ecMaxReuseTimes\x18\x03 \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x0ecMaxReuseTimes\x12Z\n" +
 	"\x10hMaxRequestTimes\x18\x04 \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x10hMaxRequestTimes\x12Z\n" +
 	"\x10hMaxReusableSecs\x18\x05 \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x10hMaxReusableSecs\x12*\n" +
-	"\x10hKeepAlivePeriod\x18\x06 \x01(\x03R\x10hKeepAlivePeriod\"\xee\v\n" +
+	"\x10hKeepAlivePeriod\x18\x06 \x01(\x03R\x10hKeepAlivePeriod\"\xa6\f\n" +
 	"\x06Config\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
@@ -465,7 +473,8 @@ const file_transport_internet_splithttp_config_proto_rawDesc = "" +
 	"\ruplinkDataKey\x18\x19 \x01(\tR\ruplinkDataKey\x12X\n" +
 	"\x0fuplinkChunkSize\x18\x1a \x01(\v2..xray.transport.internet.splithttp.RangeConfigR\x0fuplinkChunkSize\x122\n" +
 	"\x14serverMaxHeaderBytes\x18\x1b \x01(\x05R\x14serverMaxHeaderBytes\x12*\n" +
-	"\x10maxReadFrameSize\x18\x1c \x01(\x05R\x10maxReadFrameSize\x1a:\n" +
+	"\x10maxReadFrameSize\x18\x1c \x01(\x05R\x10maxReadFrameSize\x126\n" +
+	"\x16downlinkFlushChunkSize\x18\x1d \x01(\x05R\x16downlinkFlushChunkSize\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x85\x01\n" +
