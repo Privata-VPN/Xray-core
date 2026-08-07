@@ -283,7 +283,7 @@ type SplitHTTPConfig struct {
 	ScStreamUpServerSecs Int32Range        `json:"scStreamUpServerSecs"`
 	ServerMaxHeaderBytes int32             `json:"serverMaxHeaderBytes"`
 	MaxReadFrameSize     int32             `json:"maxReadFrameSize"`
-	DownlinkFlushChunkSize int32           `json:"downlinkFlushChunk"`
+	DownlinkFlushChunkSize int32           `json:"downlinkFlushChunkSize"`
 	Xmux                 XmuxConfig        `json:"xmux"`
 	DownloadSettings     *StreamConfig     `json:"downloadSettings"`
 	Extra                json.RawMessage   `json:"extra"`
