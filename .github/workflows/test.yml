@@ -67,7 +67,9 @@ jobs:
           check-latest: true
           cache: false
       - name: Check Format
-        run: go run ./infra/vformat/main.go -mode check -pwd ./
+        run: |
+          go install -v mvdan.cc/gofumpt@latest
+          go run ./infra/vformat/main.go -mode check -pwd ./
 
   test:
     needs: check-assets
