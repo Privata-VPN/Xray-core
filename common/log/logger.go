@@ -57,6 +57,11 @@ func ReplaceWithSeverityLogger(serverity Severity) {
 	RegisterHandler(s)
 }
 
+// LogLevel implements SeverityLimiter.
+func (l *serverityLogger) LogLevel() Severity {
+	return l.logLevel
+}
+
 func (l *serverityLogger) Handle(msg Message) {
 	switch msg := msg.(type) {
 	case *GeneralMessage:

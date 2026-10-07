@@ -103,6 +103,14 @@ func (g *Instance) Start() error {
 	return g.startInternal()
 }
 
+// LogLevel implements log.SeverityLimiter.
+func (g *Instance) LogLevel() log.Severity {
+	if g.config.ErrorLogType == LogType_None {
+		return log.Severity_Unknown
+	}
+	return g.config.ErrorLogLevel
+}
+
 // Handle implements log.Handler.
 func (g *Instance) Handle(msg log.Message) {
 	g.RLock()

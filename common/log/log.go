@@ -2,6 +2,7 @@ package log // import "github.com/xtls/xray-core/common/log"
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/xtls/xray-core/common/serial"
 )
@@ -30,6 +31,22 @@ func (m *GeneralMessage) String() string {
 // Record writes a message into log stream.
 func Record(msg Message) {
 	logHandler.Handle(msg)
+}
+
+// SeverityLimiter is implemented by handlers that drop every GeneralMessage
+// less severe than LogLevel.
+type SeverityLimiter interface {
+	LogLevel() Severity
+}
+
+// logLevel is the LogLevel of the registered handler, or Severity_Debug if
+// it keeps every GeneralMessage.
+var logLevel atomic.Int32
+
+// Enabled reports whether the registered handler may keep a GeneralMessage
+// of severity s, so that callers can skip building messages it would drop.
+func Enabled(s Severity) bool {
+	return int32(s) <= logLevel.Load()
 }
 
 var logHandler syncHandler
@@ -61,4 +78,9 @@ func (h *syncHandler) Set(handler Handler) {
 	defer h.Unlock()
 
 	h.Handler = handler
+	level := Severity_Debug
+	if l, ok := handler.(SeverityLimiter); ok {
+		level = l.LogLevel()
+	}
+	logLevel.Store(int32(level))
 }

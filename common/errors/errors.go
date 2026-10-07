@@ -26,9 +26,33 @@ type hasSeverity interface {
 type Error struct {
 	prefix   []interface{}
 	message  []interface{}
-	caller   string
+	callerPC uintptr // return PC into the function that created the error
 	inner    error
 	severity log.Severity
+}
+
+// callerPackage returns the package, relative to this module, of the
+// function at return PC pc. It is resolved only when an error is formatted,
+// since looking up the caller is costly and most errors are never printed.
+func callerPackage(pc uintptr) string {
+	if pc == 0 {
+		return ""
+	}
+	details := runtime.FuncForPC(pc - 1).Name()
+	if len(details) >= trim {
+		details = details[trim:]
+	}
+	i := strings.Index(details, ".")
+	if i > 0 {
+		details = details[:i]
+	}
+	return details
+}
+
+func callerPC(skip int) uintptr {
+	var pc [1]uintptr
+	runtime.Callers(skip+2, pc[:])
+	return pc[0]
 }
 
 // Error implements error.Error().
@@ -40,8 +64,8 @@ func (err *Error) Error() string {
 		builder.WriteString("] ")
 	}
 
-	if len(err.caller) > 0 {
-		builder.WriteString(err.caller)
+	if caller := callerPackage(err.callerPC); len(caller) > 0 {
+		builder.WriteString(caller)
 		builder.WriteString(": ")
 	}
 
@@ -122,19 +146,10 @@ type ExportOption func(*ExportOptionHolder)
 
 // New returns a new error object with message formed from given arguments.
 func New(msg ...interface{}) *Error {
-	pc, _, _, _ := runtime.Caller(1)
-	details := runtime.FuncForPC(pc).Name()
-	if len(details) >= trim {
-		details = details[trim:]
-	}
-	i := strings.Index(details, ".")
-	if i > 0 {
-		details = details[:i]
-	}
 	return &Error{
 		message:  msg,
 		severity: log.Severity_Info,
-		caller:   details,
+		callerPC: callerPC(1),
 	}
 }
 
@@ -171,19 +186,17 @@ func LogErrorInner(ctx context.Context, inner error, msg ...interface{}) {
 }
 
 func doLog(ctx context.Context, inner error, severity log.Severity, msg ...interface{}) {
-	pc, _, _, _ := runtime.Caller(2)
-	details := runtime.FuncForPC(pc).Name()
-	if len(details) >= trim {
-		details = details[trim:]
+	effective := severity
+	if s, ok := inner.(hasSeverity); ok {
+		effective = min(effective, s.Severity())
 	}
-	i := strings.Index(details, ".")
-	if i > 0 {
-		details = details[:i]
+	if !log.Enabled(effective) {
+		return
 	}
 	err := &Error{
 		message:  msg,
 		severity: severity,
-		caller:   details,
+		callerPC: callerPC(2),
 		inner:    inner,
 	}
 	if ctx != nil && ctx != context.Background() {
