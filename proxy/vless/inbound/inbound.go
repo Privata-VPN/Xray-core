@@ -281,8 +281,9 @@ func (h *Handler) Process(ctx context.Context, network net.Network, connection s
 		return errors.New("unable to set read deadline").Base(err)
 	}
 
-	first := buf.FromBytes(make([]byte, buf.Size))
-	first.Clear()
+	// first goes back to the pool once the payload after the header has been
+	// forwarded; reading it after that finds it empty.
+	first := buf.New()
 	firstLen, errR := first.ReadFrom(connection)
 	if errR != nil {
 		return errR
