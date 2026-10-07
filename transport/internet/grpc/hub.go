@@ -30,7 +30,7 @@ type Listener struct {
 
 func (l Listener) Tun(server encoding.GRPCService_TunServer) error {
 	tunCtx, cancel := context.WithCancel(l.ctx)
-	l.handler(encoding.NewHunkConn(server, cancel, l.trustedXForwardedFor))
+	l.handler(encoding.NewServerHunkConn(server, cancel, l.trustedXForwardedFor))
 	<-tunCtx.Done()
 	return nil
 }
@@ -93,6 +93,8 @@ func Listen(ctx context.Context, address net.Address, port net.Port, settings *i
 			Timeout: time.Second * time.Duration(grpcSettings.HealthCheckTimeout),
 		}))
 	}
+
+	options = append(options, grpc.ForceServerCodecV2(encoding.Codec{}))
 
 	s = grpc.NewServer(options...)
 	listener.s = s

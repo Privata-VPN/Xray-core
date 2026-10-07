@@ -30,16 +30,30 @@ type HunkReaderWriter struct {
 
 	buf   []byte
 	index int
+
+	// ownedSends hands buffers to gRPC instead of copying them; the
+	// stream's codec must be Codec.
+	ownedSends bool
 }
 
 func NewHunkReadWriter(hc HunkConn, cancel context.CancelFunc) *HunkReaderWriter {
-	return &HunkReaderWriter{hc, cancel, done.New(), nil, 0}
+	return &HunkReaderWriter{hc: hc, cancel: cancel, done: done.New()}
 }
 
 func NewHunkConn(hc HunkConn, cancel context.CancelFunc, trustedXForwardedFor []string) net.Conn {
+	return newHunkConn(hc, cancel, trustedXForwardedFor, false)
+}
+
+// NewServerHunkConn is NewHunkConn for streams of a server using Codec.
+func NewServerHunkConn(hc HunkConn, cancel context.CancelFunc, trustedXForwardedFor []string) net.Conn {
+	return newHunkConn(hc, cancel, trustedXForwardedFor, true)
+}
+
+func newHunkConn(hc HunkConn, cancel context.CancelFunc, trustedXForwardedFor []string, ownedSends bool) net.Conn {
 	rAddr := remoteAddrFromContext(hc.Context(), trustedXForwardedFor)
 	lAddr := localAddrFromContext(hc.Context())
 	wrc := NewHunkReadWriter(hc, cancel)
+	wrc.ownedSends = ownedSends
 	return cnc.NewConnection(
 		cnc.ConnectionInput(wrc),
 		cnc.ConnectionOutput(wrc),
@@ -115,6 +129,32 @@ func (h *HunkReaderWriter) Write(buf []byte) (int, error) {
 		return 0, errors.New("failed to send data over gRPC tunnel").Base(err)
 	}
 	return len(buf), nil
+}
+
+// WriteMultiBuffer implements buf.Writer, sending each buffer as one hunk.
+func (h *HunkReaderWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	if h.done.Done() {
+		buf.ReleaseMulti(mb)
+		return io.ErrClosedPipe
+	}
+	for i, b := range mb {
+		if b.IsEmpty() {
+			b.Release()
+			continue
+		}
+		var err error
+		if h.ownedSends {
+			err = h.hc.SendMsg(newOwnedHunk(b))
+		} else {
+			err = h.hc.Send(&Hunk{Data: b.Bytes()})
+			b.Release()
+		}
+		if err != nil {
+			buf.ReleaseMulti(mb[i+1:])
+			return errors.New("failed to send data over gRPC tunnel").Base(err)
+		}
+	}
+	return nil
 }
 
 func (h *HunkReaderWriter) Close() error {
