@@ -139,7 +139,7 @@ func (w *tcpWorker) Start() error {
 	}
 
 	hub, err := internet.ListenTCP(ctx, w.address, w.port, w.stream, func(conn stat.Connection) {
-		go w.callback(conn)
+		task.Go(func() { w.callback(conn) })
 	})
 	if err != nil {
 		return errors.New("failed to listen TCP on ", w.port).Base(err)
@@ -525,7 +525,7 @@ func (w *dsWorker) Port() net.Port {
 func (w *dsWorker) Start() error {
 	ctx := context.Background()
 	hub, err := internet.ListenUnix(ctx, w.address, w.stream, func(conn stat.Connection) {
-		go w.callback(conn)
+		task.Go(func() { w.callback(conn) })
 	})
 	if err != nil {
 		return errors.New("failed to listen Unix Domain Socket on ", w.address).Base(err)
