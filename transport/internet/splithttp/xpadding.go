@@ -1,6 +1,7 @@
 package splithttp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"math"
 	"net/http"
@@ -120,6 +121,26 @@ func GenerateTokenishPaddingBase62(targetHuffmanBytes int) string {
 	return randBase62Str
 }
 
+var (
+	xPadding      = strings.Repeat("X", 8192)
+	xPaddingSlice = []byte(xPadding) // must not be modified
+)
+
+func repeatX(length int) string {
+	if length <= len(xPadding) {
+		return xPadding[:length]
+	}
+	return strings.Repeat("X", length)
+}
+
+// xPaddingBytes returns length 'X' bytes, which callers must not modify.
+func xPaddingBytes(length int) []byte {
+	if length <= len(xPaddingSlice) {
+		return xPaddingSlice[:length:length]
+	}
+	return bytes.Repeat([]byte{'X'}, length)
+}
+
 func GeneratePadding(method PaddingMethod, length int) string {
 	if length <= 0 {
 		return ""
@@ -133,15 +154,15 @@ func GeneratePadding(method PaddingMethod, length int) string {
 
 	switch method {
 	case PaddingMethodRepeatX:
-		return strings.Repeat("X", length)
+		return repeatX(length)
 	case PaddingMethodTokenish:
 		paddingValue := GenerateTokenishPaddingBase62(length)
 		if paddingValue == "" {
-			return strings.Repeat("X", length)
+			return repeatX(length)
 		}
 		return paddingValue
 	default:
-		return strings.Repeat("X", length)
+		return repeatX(length)
 	}
 }
 
@@ -248,6 +269,27 @@ func (c *Config) ApplyXPaddingToResponse(writer http.ResponseWriter, config XPad
 	}
 }
 
+// rawQueryValue returns url.ParseQuery(rawQuery).Get(key) without building
+// the whole map of values.
+func rawQueryValue(rawQuery, key string) string {
+	for rawQuery != "" {
+		var kv string
+		kv, rawQuery, _ = strings.Cut(rawQuery, "&")
+		if kv == "" || strings.Contains(kv, ";") {
+			continue
+		}
+		k, v, _ := strings.Cut(kv, "=")
+		k, err := url.QueryUnescape(k)
+		if err != nil || k != key {
+			continue
+		}
+		if v, err = url.QueryUnescape(v); err == nil {
+			return v
+		}
+	}
+	return ""
+}
+
 func (c *Config) ExtractXPaddingFromRequest(req *http.Request, obfsMode bool) (string, string) {
 	if req == nil {
 		return "", ""
@@ -258,12 +300,12 @@ func (c *Config) ExtractXPaddingFromRequest(req *http.Request, obfsMode bool) (s
 
 		if referrer != "" {
 			if referrerURL, err := url.Parse(referrer); err == nil {
-				paddingValue := referrerURL.Query().Get("x_padding")
+				paddingValue := rawQueryValue(referrerURL.RawQuery, "x_padding")
 				paddingPlacement := PlacementQueryInHeader + "=Referer, key=x_padding"
 				return paddingValue, paddingPlacement
 			}
 		} else {
-			paddingValue := req.URL.Query().Get("x_padding")
+			paddingValue := rawQueryValue(req.URL.RawQuery, "x_padding")
 			return paddingValue, PlacementQuery + ", key=x_padding"
 		}
 	}
@@ -290,11 +332,11 @@ func (c *Config) ExtractXPaddingFromRequest(req *http.Request, obfsMode bool) (s
 		if parsedURL, err := url.Parse(headerValue); err == nil {
 			paddingPlacement := PlacementQueryInHeader + "=" + header + ", key=" + key
 
-			return parsedURL.Query().Get(key), paddingPlacement
+			return rawQueryValue(parsedURL.RawQuery, key), paddingPlacement
 		}
 	}
 
-	queryValue := req.URL.Query().Get(key)
+	queryValue := rawQueryValue(req.URL.RawQuery, key)
 
 	if queryValue != "" {
 		paddingPlacement := PlacementQuery + ", key=" + key
