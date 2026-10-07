@@ -1,7 +1,6 @@
 package splithttp
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	gotls "crypto/tls"
@@ -31,6 +30,7 @@ import (
 	"github.com/xtls/xray-core/transport/internet/reality"
 	"github.com/xtls/xray-core/transport/internet/stat"
 	"github.com/xtls/xray-core/transport/internet/tls"
+	"golang.org/x/net/http2"
 )
 
 type requestHandler struct {
@@ -222,11 +222,17 @@ func (h *requestHandler) ServeHTTP(writer http.ResponseWriter, request *http.Req
 				if (hasLegacyRefererCompatMarker || obfsPaddingAccepted) && scStreamUpServerSecs.To > 0 {
 					go func() {
 						for {
-							_, err := httpSC.Write(bytes.Repeat([]byte{'X'}, int(h.config.GetNormalizedXPaddingBytes().rand())))
+							_, err := httpSC.Write(xPaddingBytes(int(h.config.GetNormalizedXPaddingBytes().rand())))
 							if err != nil {
-								break
+								return
 							}
-							time.Sleep(time.Duration(scStreamUpServerSecs.rand()) * time.Second)
+							timer := time.NewTimer(time.Duration(scStreamUpServerSecs.rand()) * time.Second)
+							select {
+							case <-timer.C:
+							case <-httpSC.Wait():
+								timer.Stop()
+								return
+							}
 						}
 					}()
 				}
@@ -454,6 +460,83 @@ func (c *httpServerConn) Write(b []byte) (int, error) {
 	return written, nil
 }
 
+// downlinkWriteSize is the most WriteMultiBuffer hands the response writer at
+// once: one full readv of the outbound connection.
+const downlinkWriteSize = 8 * buf.Size
+
+var downlinkWritePool = sync.Pool{
+	New: func() any {
+		b := make([]byte, downlinkWriteSize)
+		return &b
+	},
+}
+
+// WriteMultiBuffer writes mb with as few response writes as possible and
+// flushes once, instead of a write and a flush per buffer. Every response
+// write is a round trip to the HTTP/2 serve goroutine.
+func (c *httpServerConn) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	if c.downlinkFlushChunk > 0 {
+		mb, err := buf.WriteMultiBuffer(c, mb)
+		buf.ReleaseMulti(mb)
+		return err
+	}
+	c.Lock()
+	defer c.Unlock()
+	if c.Done() {
+		buf.ReleaseMulti(mb)
+		return io.ErrClosedPipe
+	}
+	var err error
+	if len(mb) == 1 {
+		_, err = c.ResponseWriter.Write(mb[0].Bytes())
+		buf.ReleaseMulti(mb)
+	} else {
+		scratch := downlinkWritePool.Get().(*[]byte)
+		for !mb.IsEmpty() && err == nil {
+			var n int
+			mb, n = buf.SplitBytes(mb, *scratch)
+			_, err = c.ResponseWriter.Write((*scratch)[:n])
+		}
+		downlinkWritePool.Put(scratch)
+		buf.ReleaseMulti(mb)
+	}
+	if err != nil {
+		return err
+	}
+	c.ResponseWriter.(http.Flusher).Flush()
+	return nil
+}
+
+// uploadReadBuffers caps the buffers ReadMultiBuffer fills at once.
+const uploadReadBuffers = 8
+
+// ReadMultiBuffer implements buf.Reader. After waiting for the first buffer
+// it keeps reading while the request body has data buffered, so the outbound
+// can write all of it with one call.
+func (c *httpServerConn) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	buffered, _ := c.Reader.(interface{ Buffered() int })
+	var mb buf.MultiBuffer
+	for {
+		b := buf.New()
+		_, err := b.ReadFrom(c.Reader)
+		if b.IsEmpty() {
+			b.Release()
+		} else {
+			mb = append(mb, b)
+		}
+		if err != nil {
+			// Readers return the error again on the next call.
+			if mb.IsEmpty() {
+				return nil, err
+			}
+			return mb, nil
+		}
+		if buffered == nil || len(mb) == uploadReadBuffers || buffered.Buffered() == 0 {
+			return mb, nil
+		}
+	}
+}
+
 func (c *httpServerConn) Close() error {
 	c.Lock()
 	defer c.Unlock()
@@ -463,6 +546,8 @@ func (c *httpServerConn) Close() error {
 type Listener struct {
 	sync.Mutex
 	server     http.Server
+	h2server   *http2.Server
+	h1conns    *connQueue
 	h3server   *http3.Server
 	listener   net.Listener
 	h3listener http3.QUICListener
@@ -584,11 +669,10 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 
 		handler.localAddr = l.listener.Addr()
 
-		// server can handle plaintext HTTP/1.1, h2c, and h2 (via TLS/Reality ALPN)
+		// server can handle plaintext HTTP/1.1, h2c, and h2 (via TLS/Reality ALPN).
+		// acceptLoop serves HTTP/2 itself, so net/http only sees HTTP/1.1.
 		protocols := new(http.Protocols)
 		protocols.SetHTTP1(true)
-		protocols.SetHTTP2(true)
-		protocols.SetUnencryptedHTTP2(true)
 		l.server = http.Server{
 			Handler:           handler,
 			ReadHeaderTimeout: time.Second * 4,
@@ -603,11 +687,10 @@ func ListenXH(ctx context.Context, address net.Address, port net.Port, streamSet
 			}
 			errors.LogDebug(ctx, "[xhttp] HTTP2Config applied to server")
 		}
-		go func() {
-			if err := l.server.Serve(l.listener); err != nil {
-				errors.LogErrorInner(ctx, err, "failed to serve HTTP for XHTTP")
-			}
-		}()
+		l.h2server = newH2Server()
+		l.h1conns = newConnQueue(l.listener.Addr())
+		go l.server.Serve(l.h1conns)
+		go l.acceptLoop(ctx)
 	}
 
 	return l, err

@@ -8,6 +8,7 @@ import (
 	"io"
 	"sync/atomic"
 
+	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/common/signal/done"
 )
@@ -58,6 +59,18 @@ func (h *uploadQueue) Close() error {
 		return reader.Close()
 	}
 	return nil
+}
+
+// ReadMultiBuffer implements buf.Reader.
+func (h *uploadQueue) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	if reader := h.reader.Load(); reader != nil {
+		return reader.ReadMultiBuffer()
+	}
+	b, err := buf.ReadBuffer(h)
+	if b == nil {
+		return nil, err
+	}
+	return buf.MultiBuffer{b}, err
 }
 
 func (h *uploadQueue) Read(b []byte) (int, error) {
