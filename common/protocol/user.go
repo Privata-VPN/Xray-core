@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"github.com/xtls/xray-core/common/errors"
+	"github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/serial"
 )
 
@@ -28,22 +29,34 @@ func (u *User) ToMemoryUser() (*MemoryUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &MemoryUser{
+	mu := &MemoryUser{
 		Account: account,
 		Email:   u.Email,
 		Level:   u.Level,
-	}, nil
+	}
+	if u.SendThrough != "" {
+		ip := net.ParseIP(u.SendThrough)
+		if ip == nil {
+			return nil, errors.New("invalid send_through of user ", u.Email, ": ", u.SendThrough)
+		}
+		mu.SendThrough = net.IPAddress(ip)
+	}
+	return mu, nil
 }
 
 func ToProtoUser(mu *MemoryUser) *User {
 	if mu == nil {
 		return nil
 	}
-	return &User{
+	u := &User{
 		Account: serial.ToTypedMessage(mu.Account.ToProto()),
 		Email:   mu.Email,
 		Level:   mu.Level,
 	}
+	if mu.SendThrough != nil {
+		u.SendThrough = mu.SendThrough.String()
+	}
+	return u
 }
 
 // MemoryUser is a parsed form of User, to reduce number of parsing of Account proto.
@@ -52,4 +65,7 @@ type MemoryUser struct {
 	Account Account
 	Email   string
 	Level   uint32
+	// SendThrough is the source address of this user's outbound connections
+	// when the outbound's sendThrough is "user". Nil if the user has none.
+	SendThrough net.Address
 }

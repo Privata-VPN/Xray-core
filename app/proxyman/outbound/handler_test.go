@@ -13,12 +13,14 @@ import (
 	. "github.com/xtls/xray-core/app/proxyman/outbound"
 	"github.com/xtls/xray-core/app/stats"
 	"github.com/xtls/xray-core/common/net"
+	"github.com/xtls/xray-core/common/protocol"
 	"github.com/xtls/xray-core/common/serial"
 	"github.com/xtls/xray-core/common/session"
 	core "github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/proxy/freedom"
 	"github.com/xtls/xray-core/transport/internet/stat"
+	_ "github.com/xtls/xray-core/transport/internet/tcp"
 )
 
 func TestInterfaces(t *testing.T) {
@@ -84,6 +86,69 @@ func TestOutboundWithStatCounter(t *testing.T) {
 	_, ok := conn.(*stat.CounterConnection)
 	if !ok {
 		t.Errorf("Expected conn to be CounterConnection")
+	}
+}
+
+func TestSendThroughUser(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	dest := net.DestinationFromAddr(listener.Addr())
+
+	v, _ := core.New(&core.Config{})
+	v.AddFeature(outbound.Manager(new(Manager)))
+	ctx := context.WithValue(context.Background(), xrayKey, v)
+	h, err := NewHandler(ctx, &core.OutboundHandlerConfig{
+		Tag: "tag",
+		SenderSettings: serial.ToTypedMessage(&proxyman.SenderConfig{
+			Via: net.NewIPOrDomain(net.DomainAddress("user")),
+		}),
+		ProxySettings: serial.ToTypedMessage(&freedom.Config{}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dial := func(user *protocol.MemoryUser) (*session.Outbound, error) {
+		ob := &session.Outbound{}
+		ctx := session.ContextWithOutbounds(ctx, []*session.Outbound{ob})
+		ctx = session.ContextWithInbound(ctx, &session.Inbound{User: user})
+		conn, err := h.(*Handler).Dial(ctx, dest)
+		if conn != nil {
+			conn.Close()
+		}
+		return ob, err
+	}
+
+	ob, err := dial(&protocol.MemoryUser{Email: "alice", SendThrough: net.LocalHostIP})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ob.Gateway != net.LocalHostIP {
+		t.Errorf("gateway %v, want %v", ob.Gateway, net.LocalHostIP)
+	}
+
+	if _, err := dial(&protocol.MemoryUser{Email: "bob"}); err == nil {
+		t.Error("dialed for a user without send_through")
+	}
+
+	ob, err = dial(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ob.Gateway != nil {
+		t.Errorf("gateway %v without a user, want none", ob.Gateway)
 	}
 }
 

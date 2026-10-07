@@ -213,7 +213,7 @@ func (h *Handler) Dispatch(ctx context.Context, link *transport.Link) {
 			if err != nil {
 				err := errors.New("failed to process mux outbound traffic").Base(err)
 				session.SubmitOutboundErrorToOriginator(ctx, err)
-				errors.LogInfo(ctx, err.Error())
+				errors.LogInfo(ctx, err)
 				common.Interrupt(link.Writer)
 				common.Interrupt(link.Reader)
 			}
@@ -252,7 +252,7 @@ out:
 		// Ensure outbound ray is properly closed.
 		err := errors.New("failed to process outbound traffic").Base(err)
 		session.SubmitOutboundErrorToOriginator(ctx, err)
-		errors.LogInfo(ctx, err.Error())
+		errors.LogInfo(ctx, err)
 		common.Interrupt(link.Writer)
 	} else {
 		if errC != nil && goerrors.Is(errC, io.ErrClosedPipe) {
@@ -306,6 +306,9 @@ func (h *Handler) Dial(ctx context.Context, dest net.Destination) (stat.Connecti
 			outbounds := session.OutboundsFromContext(ctx)
 			ob := outbounds[len(outbounds)-1]
 			h.SetOutboundGateway(ctx, ob)
+			if err := h.checkUserGateway(ctx, ob); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -344,6 +347,10 @@ func (h *Handler) SetOutboundGateway(ctx context.Context, ob *session.Outbound) 
 					errors.LogDebug(ctx, "use inbound source ip as sendthrough: ", inbound.Source.Address.String())
 				}
 			}
+		case domain == "user":
+			if inbound := session.InboundFromContext(ctx); inbound != nil && inbound.User != nil {
+				ob.Gateway = inbound.User.SendThrough
+			}
 		// case addr.Family().IsDomain():
 		default:
 			ob.Gateway = addr
@@ -351,6 +358,19 @@ func (h *Handler) SetOutboundGateway(ctx context.Context, ob *session.Outbound) 
 		}
 
 	}
+}
+
+// checkUserGateway refuses a connection of a user without a source address
+// when sendThrough is "user", rather than sending it from this machine's own
+// address. Connections Xray opens itself have no user and are left alone.
+func (h *Handler) checkUserGateway(ctx context.Context, ob *session.Outbound) error {
+	if ob.Gateway != nil || h.senderSettings.Via.GetDomain() != "user" {
+		return nil
+	}
+	if inbound := session.InboundFromContext(ctx); inbound != nil && inbound.User != nil {
+		return errors.New("user ", inbound.User.Email, " has no send_through address").AtWarning()
+	}
+	return nil
 }
 
 func (h *Handler) getStatCouterConnection(conn stat.Connection) stat.Connection {
