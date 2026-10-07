@@ -24,8 +24,8 @@ func Run(ctx context.Context, tasks ...func() error) error {
 
 	for _, task := range tasks {
 		<-s.Wait()
-		go func(f func() error) {
-			err := f()
+		Go(func() {
+			err := task()
 			if err == nil {
 				s.Signal()
 				return
@@ -35,7 +35,7 @@ func Run(ctx context.Context, tasks ...func() error) error {
 			case done <- err:
 			default:
 			}
-		}(task)
+		})
 	}
 
 	/*
