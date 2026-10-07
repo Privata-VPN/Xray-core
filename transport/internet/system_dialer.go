@@ -2,6 +2,8 @@ package internet
 
 import (
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,6 +28,51 @@ type SystemDialer interface {
 type DefaultSystemDialer struct {
 	dns dns.Client
 	obm outbound.Manager
+}
+
+// SourceDNS, if set, is the DNS server (host:port) that resolves the domain
+// of a connection with a source address. The query is sent from that same
+// address, so it leaves this machine the way the connection does.
+var SourceDNS = os.Getenv("XRAY_SOURCE_DNS")
+
+// SourceResolver returns a resolver that queries SourceDNS from src, and the
+// network, "ip4" or "ip6", of the addresses src can reach. It returns nil if
+// SourceDNS is unset or src is not a specific IP.
+func SourceResolver(src net.Address) (*net.Resolver, string) {
+	if SourceDNS == "" || src == nil || !src.Family().IsIP() || src.IP().IsUnspecified() {
+		return nil, ""
+	}
+	network := "ip4"
+	if src.Family().IsIPv6() {
+		network = "ip6"
+	}
+	ip := src.IP()
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			if strings.HasPrefix(network, "tcp") {
+				d.LocalAddr = &net.TCPAddr{IP: ip}
+			} else {
+				d.LocalAddr = &net.UDPAddr{IP: ip}
+			}
+			return d.DialContext(ctx, network, SourceDNS)
+		},
+	}, network
+}
+
+// ResolveUDPAddr is net.ResolveUDPAddr for a destination that src sends to,
+// through SourceResolver(src) if there is one.
+func ResolveUDPAddr(ctx context.Context, src net.Address, dest net.Destination) (*net.UDPAddr, error) {
+	r, network := SourceResolver(src)
+	if r == nil || !dest.Address.Family().IsDomain() {
+		return net.ResolveUDPAddr("udp", dest.NetAddr())
+	}
+	ips, err := r.LookupIP(ctx, network, dest.Address.Domain())
+	if err != nil {
+		return nil, err
+	}
+	return &net.UDPAddr{IP: ips[0], Port: int(dest.Port)}, nil
 }
 
 func resolveSrcAddr(network net.Network, src net.Address) net.Addr {
@@ -58,7 +105,7 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
 			}
 		}
 		var lc net.ListenConfig
-		destAddr, err := net.ResolveUDPAddr("udp", dest.NetAddr())
+		destAddr, err := ResolveUDPAddr(ctx, src, dest)
 		if err != nil {
 			return nil, err
 		}
@@ -113,6 +160,9 @@ func (d *DefaultSystemDialer) Dial(ctx context.Context, src net.Address, dest ne
 		LocalAddr:       resolveSrcAddr(dest.Network, src),
 		KeepAlive:       keepAlive,
 		KeepAliveConfig: keepAliveConfig,
+	}
+	if dest.Address.Family().IsDomain() {
+		dialer.Resolver, _ = SourceResolver(src)
 	}
 
 	if sockopt != nil || len(Controllers) > 0 {

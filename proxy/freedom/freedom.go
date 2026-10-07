@@ -309,7 +309,9 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 		} else if h.shouldResolveDomainBeforeFinalRules(dialDest, defaultRule) { // asis + domain + hasrules
 			domain := dialDest.Address.Domain()
 			var ips []net.IP
-			if firstResolve {
+			if resolver, network := internet.SourceResolver(outGateway); resolver != nil {
+				ips, _ = resolver.LookupIP(ctx, network, domain)
+			} else if firstResolve {
 				firstResolve = false
 				supportIPv4, supportIPv6 := utils.CheckRoutes()
 				if supportIPv4 {
@@ -618,7 +620,7 @@ func (w *PacketWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 						}
 					}
 					if ShouldUseSystemResolver {
-						udpAddr, err := net.ResolveUDPAddr("udp", b.UDP.NetAddr())
+						udpAddr, err := internet.ResolveUDPAddr(context.Background(), w.LocalAddr, *b.UDP)
 						if err != nil {
 							b.Release()
 							continue
