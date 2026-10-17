@@ -291,6 +291,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	var blockedDest *net.Destination
 	var blockedRule *FinalRule
 	err := retry.ExponentialBackoff(5, 100).On(func() error {
+		dialDest := destination
 		if destination.Address.Family().IsDomain() {
 			if defaultRule != nil || len(h.finalRules) > 0 {
 				if strategy := h.resolveStrategy; strategy.HasStrategy() {
@@ -310,6 +311,25 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 								return nil
 							}
 						}
+					}
+				} else if resolver, network := internet.SourceResolver(outGateway); resolver != nil {
+					ips, err := resolver.LookupIP(ctx, network, destination.Address.Domain())
+					if err != nil { // dialer may retry DNS
+						errors.LogInfoInner(ctx, err, "failed to get IP address for domain ", destination.Address.Domain())
+					}
+					for _, ip := range ips {
+						if addr := net.IPAddress(ip); addr != nil {
+							if rule := h.matchFinalRule(destination.Network, addr, destination.Port, defaultRule); rule != nil && rule.action == RuleAction_Block {
+								blockedDest = &destination
+								blockedDest.Address = addr
+								blockedRule = rule
+								return nil
+							}
+						}
+					}
+					// Dial the checked address so the domain is resolved once.
+					if len(ips) > 0 {
+						dialDest.Address = net.IPAddress(ips[dice.Roll(len(ips))])
 					}
 				} else {
 					addrs, err := net.DefaultResolver.LookupIPAddr(ctx, destination.Address.Domain())
@@ -336,7 +356,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 			}
 		}
 
-		rawConn, err := dialer.Dial(ctx, destination)
+		rawConn, err := dialer.Dial(ctx, dialDest)
 		if err != nil {
 			return err
 		}
@@ -612,7 +632,7 @@ func (w *PacketWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
 						}
 					}
 					if shouldUseSystemResolver {
-						udpAddr, err := net.ResolveUDPAddr("udp", b.UDP.NetAddr())
+						udpAddr, err := internet.ResolveUDPAddr(context.Background(), w.OutGateway, *b.UDP)
 						if err != nil {
 							b.Release()
 							continue
