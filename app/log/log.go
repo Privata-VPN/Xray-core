@@ -142,6 +142,9 @@ func (g *Instance) Handle(msg log.Message) {
 }
 
 func (g *Instance) Severity() log.Severity {
+	if g.config.ErrorLogType == LogType_None {
+		return log.Severity_Unknown
+	}
 	return g.config.ErrorLogLevel
 }
 

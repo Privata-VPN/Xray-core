@@ -20,10 +20,35 @@ type hasInnerError interface {
 
 // Error is an error object with underlying error.
 type Error struct {
-	prefix  []interface{}
-	message []interface{}
-	caller  string
-	inner   error
+	prefix   []interface{}
+	message  []interface{}
+	callerPC uintptr // return PC into the function that created the error
+	inner    error
+}
+
+// callerPackage returns the package, relative to this module, of the
+// function at return PC pc. It is resolved only when an error is formatted,
+// since looking up the caller is costly and most errors are never printed.
+func callerPackage(pc uintptr) string {
+	if pc == 0 {
+		return ""
+	}
+	frame, _ := runtime.CallersFrames([]uintptr{pc}).Next()
+	details := frame.Function
+	if len(details) >= trim {
+		details = details[trim:]
+	}
+	i := strings.Index(details, ".")
+	if i > 0 {
+		details = details[:i]
+	}
+	return details
+}
+
+func callerPC(skip int) uintptr {
+	var pc [1]uintptr
+	runtime.Callers(skip+2, pc[:])
+	return pc[0]
 }
 
 // Error implements error.Error().
@@ -35,8 +60,8 @@ func (err *Error) Error() string {
 		builder.WriteString("] ")
 	}
 
-	if len(err.caller) > 0 {
-		builder.WriteString(err.caller)
+	if caller := callerPackage(err.callerPC); len(caller) > 0 {
+		builder.WriteString(caller)
 		builder.WriteString(": ")
 	}
 
@@ -77,18 +102,9 @@ type ExportOption func(*ExportOptionHolder)
 
 // New returns a new error object with message formed from given arguments.
 func New(msg ...interface{}) *Error {
-	pc, _, _, _ := runtime.Caller(1)
-	details := runtime.FuncForPC(pc).Name()
-	if len(details) >= trim {
-		details = details[trim:]
-	}
-	i := strings.Index(details, ".")
-	if i > 0 {
-		details = details[:i]
-	}
 	return &Error{
-		message: msg,
-		caller:  details,
+		message:  msg,
+		callerPC: callerPC(1),
 	}
 }
 
@@ -128,19 +144,10 @@ func doLog(ctx context.Context, inner error, severity log.Severity, msg ...inter
 	if log.GetSeverity() < severity {
 		return
 	}
-	pc, _, _, _ := runtime.Caller(2)
-	details := runtime.FuncForPC(pc).Name()
-	if len(details) >= trim {
-		details = details[trim:]
-	}
-	i := strings.Index(details, ".")
-	if i > 0 {
-		details = details[:i]
-	}
 	err := &Error{
-		message: msg,
-		caller:  details,
-		inner:   inner,
+		message:  msg,
+		callerPC: callerPC(2),
+		inner:    inner,
 	}
 	if ctx != nil && ctx != context.Background() {
 		id := uint32(c.IDFromContext(ctx))
