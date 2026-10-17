@@ -16,4 +16,8 @@ message User {
   // Protocol specific account information. Must be the account proto in one of
   // the proxies.
   xray.common.serial.TypedMessage account = 3;
+
+  // IP address this user's outbound connections are sent from, for outbounds
+  // whose sendThrough is "user".
+  string send_through = 100;
 }

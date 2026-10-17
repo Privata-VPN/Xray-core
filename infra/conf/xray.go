@@ -359,7 +359,7 @@ func (c *OutboundDetourConfig) Build() (*core.OutboundHandlerConfig, error) {
 		} else {
 			if address.Family().IsDomain() {
 				domain := address.Address.Domain()
-				if domain != "origin" && domain != "srcip" {
+				if domain != "origin" && domain != "srcip" && domain != "user" {
 					return nil, errors.New("unable to send through: " + address.String())
 				}
 			}
