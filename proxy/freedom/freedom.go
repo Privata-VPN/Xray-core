@@ -3,7 +3,9 @@ package freedom
 import (
 	"context"
 	"crypto/rand"
+	goerrors "errors"
 	"io"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -290,6 +292,7 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 	var conn stat.Connection
 	var blockedDest *net.Destination
 	var blockedRule *FinalRule
+	var refused error
 	err := retry.ExponentialBackoff(5, 100).On(func() error {
 		dialDest := destination
 		if destination.Address.Family().IsDomain() {
@@ -358,12 +361,21 @@ func (h *Handler) Process(ctx context.Context, link *transport.Link, dialer inte
 
 		rawConn, err := dialer.Dial(ctx, dialDest)
 		if err != nil {
+			// A connect that local policy refuses, such as a router's abuse
+			// guard, is refused again on every retry.
+			if goerrors.Is(err, os.ErrPermission) {
+				refused = err
+				return nil
+			}
 			return err
 		}
 
 		conn = rawConn
 		return nil
 	})
+	if err == nil && refused != nil {
+		err = refused
+	}
 	if err != nil {
 		return errors.New("failed to open connection to ", destination).Base(err)
 	}
